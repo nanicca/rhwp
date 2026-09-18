@@ -10,9 +10,13 @@
 //! `parse_hwpx` 로 되읽어 내용이 그대로 복원됨을 이 모듈의 테스트가 증명한다.
 
 pub mod builder;
+pub mod insert;
+pub mod markdown;
 pub mod schema;
 
 pub use builder::build_scaffold;
+pub use insert::InsertBlocksReport;
+pub use markdown::{parse_markdown_blocks, strip_inline};
 pub use schema::{Block, PageSize, ScaffoldSpec, SCAFFOLD_SCHEMA_VERSION};
 
 use crate::error::HwpError;

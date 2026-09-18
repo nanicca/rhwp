@@ -740,6 +740,9 @@ fn stats_tool_name<'a>(
         "hwp_doc_replace_text" => Some("hwp_doc_replace_text"),
         "hwp_doc_set_cell" => Some("hwp_doc_set_cell"),
         "hwp_doc_fill_fields" => Some("hwp_doc_fill_fields"),
+        "hwp_new_from_markdown" => Some("hwp_new_from_markdown"),
+        "hwp_doc_insert_markdown" => Some("hwp_doc_insert_markdown"),
+        "hwp_doc_delete_paragraph" => Some("hwp_doc_delete_paragraph"),
         "hwp_doc_save" => Some("hwp_doc_save"),
         "hwp_close" => Some("hwp_close"),
         _ => None,
@@ -1139,7 +1142,17 @@ fn session_tool_annotations(name: &str, writes_file: bool) -> serde_json::Value 
     let read_axis = crate::agent_profiles::SESSION_READ_TOOLS.contains(&name);
     let read_only = read_axis && !writes_file;
     let destructive = name == "hwp_doc_save";
-    let idempotent = !matches!(name, "hwp_open" | "hwp_ws_open" | "hwp_doc_replace_text");
+    // [Markdown 저작] hwp_new_from_markdown 은 호출마다 새 docId, insert/delete 는 같은
+    // 인자를 다시 보내면 한 번 더 끼우거나 다음 문단을 지운다 — 셋 다 멱등이 아니다.
+    let idempotent = !matches!(
+        name,
+        "hwp_open"
+            | "hwp_ws_open"
+            | "hwp_doc_replace_text"
+            | "hwp_new_from_markdown"
+            | "hwp_doc_insert_markdown"
+            | "hwp_doc_delete_paragraph"
+    );
     crate::cli::metadata::mcp::mcp_annotations(read_only, destructive, idempotent)
 }
 
@@ -1326,6 +1339,49 @@ fn served_tools(
         }
     }));
     session.push(serde_json::json!({
+        "name": "hwp_new_from_markdown",
+        "description": "[Markdown 저작] 대화에서 만든 Markdown 초안으로 **새 문서 핸들**을 연다(디스크 미기록 — hwp_doc_save 가 기록 지점이며 output 확장자가 .hwp 면 HWP5, .hwpx 면 HWPX 로 저장된다). 지원 구문: #~####### 제목(개요 수준 1~7), 빈 줄로 나뉜 문단, -·* 글머리표, 1. 번호 항목, | 파이프 표 |, ``` 코드 블록, > 인용. 인라인 강조(**·`)는 표식만 벗겨 평문으로 넣는다. 돌려받은 docId 에 hwp_doc_insert_markdown·hwp_doc_replace_text·hwp_doc_set_cell 을 이어 쓸 수 있고, 조회(hwp_doc_text/hwp_doc_render_page)로 확인한 뒤 hwp_doc_save → hwp_close 로 닫는다.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "markdown": { "type": "string", "description": "본문 Markdown. 빈 문자열이면 빈 문서" },
+                "title": { "type": "string", "description": "문서 제목 — 본문 맨 위 가운데 정렬 제목 문단. 생략 가능(첫 줄의 # 제목은 개요 1수준 문단으로 들어간다)" },
+                "font": { "type": "string", "description": "기본 글꼴 이름. 기본 함초롬바탕" },
+                "pageWidthMm": { "type": "number", "exclusiveMinimum": 0, "description": "쪽 너비(mm). 기본 210(A4 세로)" },
+                "pageHeightMm": { "type": "number", "exclusiveMinimum": 0, "description": "쪽 높이(mm). 기본 297(A4 세로)" }
+            },
+            "required": ["markdown"]
+        }
+    }));
+    session.push(serde_json::json!({
+        "name": "hwp_doc_insert_markdown",
+        "description": "[Markdown 저작] 열린 핸들의 본문에 Markdown 블록(제목·문단·글머리표·번호 항목·파이프 표)을 문단으로 끼워 넣는다(디스크 미기록 — hwp_doc_save 가 기록 지점). 위치는 셋 중 하나: 생략(마지막 구역 끝에 추가) / at(그 문단 인덱스 **앞**, hwp_doc_search·hwp_doc_tree 의 paragraph 주소와 같은 0 기준, 문단 수와 같으면 끝) / afterText(그 문자열이 처음 나오는 문단 **바로 뒤**). 새 문단은 삽입 지점 앞 문단의 글자·문단 서식을 상속하고, # 제목은 개요 수준 문단(hwp_doc_structure 가 개요로 인식)·표는 실선 테두리 표로 들어간다. 봉투의 changedPages:[n,…]|null 은 재조판 후 0 기준 쪽 번호 — 그 쪽만 hwp_doc_render_page 로 렌더하면 눈검증이 끝난다.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string", "description": "hwp_open 또는 hwp_new_from_markdown 이 돌려준 핸들" },
+                "markdown": { "type": "string", "minLength": 1, "description": "끼워 넣을 Markdown" },
+                "section": { "type": "integer", "minimum": 0, "description": "구역 번호(0 기준). 생략 시 at 이 있으면 0, 없으면 마지막 구역" },
+                "at": { "type": "integer", "minimum": 0, "description": "이 문단 인덱스 앞에 삽입. afterText 와 동시에 줄 수 없다" },
+                "afterText": { "type": "string", "minLength": 1, "description": "이 문자열이 처음 나오는 문단 뒤에 삽입(본문 검색, 대소문자 구분). at 과 동시에 줄 수 없다" }
+            },
+            "required": ["docId", "markdown"]
+        }
+    }));
+    session.push(serde_json::json!({
+        "name": "hwp_doc_delete_paragraph",
+        "description": "[Markdown 저작] 열린 핸들에서 문단 하나를 지운다(디스크 미기록 — hwp_doc_save 가 기록 지점). 주소는 hwp_doc_search·hwp_doc_tree 의 section/paragraph 와 같은 0 기준이다. 표를 담은 문단을 지우면 표 전체가 사라진다. 구역에 마지막 남은 문단은 지울 수 없다(isError). 여러 문단을 지울 때는 **큰 인덱스부터** 지워야 앞쪽 주소가 밀리지 않는다.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "docId": { "type": "string", "description": "핸들" },
+                "section": { "type": "integer", "minimum": 0, "description": "구역 번호(0 기준). 기본 0" },
+                "paragraph": { "type": "integer", "minimum": 0, "description": "지울 문단 인덱스(0 기준)" }
+            },
+            "required": ["docId", "paragraph"]
+        }
+    }));
+    session.push(serde_json::json!({
         "name": "hwp_doc_save",
         "description": "[#3598] 핸들에 누적된 편집을 형식 보존(HWPX→HWPX, 그 외→HWP5, #3383 규약)으로 저장한다. 핸들은 저장 후에도 열려 있다 — 이어서 편집·재저장할 수 있다.",
         "inputSchema": {
@@ -1422,6 +1478,21 @@ fn handle_tool_call(
             &args,
             sessions,
             session_fill_fields,
+        )),
+        // [Markdown 저작] 대화 초안 → 새 핸들 / 열린 핸들에 블록 삽입 / 문단 삭제.
+        // new 는 docId 가 아직 없으니 저널 밖, 나머지 둘은 변이라 저널로 감싼다.
+        "hwp_new_from_markdown" => Ok(session_new_from_markdown(&args, sessions)),
+        "hwp_doc_insert_markdown" => Ok(journal_wrap(
+            "hwp_doc_insert_markdown",
+            &args,
+            sessions,
+            session_insert_markdown,
+        )),
+        "hwp_doc_delete_paragraph" => Ok(journal_wrap(
+            "hwp_doc_delete_paragraph",
+            &args,
+            sessions,
+            session_delete_paragraph,
         )),
         "hwp_doc_save" => Ok(journal_wrap("hwp_doc_save", &args, sessions, session_save)),
         "hwp_close" => Ok(session_close(&args, sessions)),
@@ -2398,6 +2469,288 @@ fn session_save(args: &serde_json::Value, sessions: &mut Sessions) -> serde_json
             "outputFormat": format.label(),
             "bytes": bytes.len(),
             "verify": verify,
+        })
+        .to_string(),
+    )
+}
+
+// ── [Markdown 저작] 대화 초안 → 문서 ──────────────────────────────────────────
+//
+// 에이전트가 대화창에서 만든 초안은 Markdown 이다. 그것을 `scaffold` JSON 으로 손수
+// 옮기게 하지 않고 서버가 블록으로 풀어(`rhwp::scaffold::parse_markdown_blocks`)
+// 새 문서를 만들거나(`hwp_new_from_markdown`) 열린 문서에 끼운다
+// (`hwp_doc_insert_markdown`). 저장은 기존 `hwp_doc_save` 하나뿐이다 — 출력 확장자가
+// `.hwp` 면 HWP5, `.hwpx` 면 HWPX 로, 새 문서든 열어 고친 문서든 같은 규칙이다.
+
+/// 선택 실수 인자 — 정수도 받되(`210`), 문자열·음수·NaN 은 거부한다.
+fn opt_f64(args: &serde_json::Value, key: &str) -> Result<Option<f64>, String> {
+    match args.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(v) => match v.as_f64() {
+            Some(n) if n.is_finite() && n > 0.0 => Ok(Some(n)),
+            _ => Err(format!("{key} 는 0 보다 큰 수여야 합니다 (받음: {v})")),
+        },
+    }
+}
+
+/// Markdown 초안으로 새 문서 핸들을 연다.
+///
+/// 무상태 `scaffold` 와 같은 빌더(`build_scaffold`)를 지나 HWPX 바이트로 한 번 직렬화한
+/// 뒤 다시 파싱한다 — 파일에서 연 핸들과 **같은 파서 경로**를 거치므로 이후 편집·저장
+/// 도구가 같은 IR 을 본다. 핸들의 원본 형식은 HWPX 로 기억되어 `hwp_doc_save` 가
+/// 확장자 규칙(HWPX→HWPX, `.hwp` 명시 시 HWP5 어댑터)을 그대로 적용한다.
+fn session_new_from_markdown(
+    args: &serde_json::Value,
+    sessions: &mut Sessions,
+) -> serde_json::Value {
+    let Some(markdown) = args.get("markdown").and_then(|m| m.as_str()) else {
+        return tool_error("markdown 이 필요합니다 (빈 문자열이면 빈 문서)".into());
+    };
+    let title = match args.get("title") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(other) => return tool_error(format!("title 은 문자열이어야 합니다 (받음: {other})")),
+    };
+    let font = match args.get("font") {
+        None | Some(serde_json::Value::Null) => "함초롬바탕".to_string(),
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        Some(other) => {
+            return tool_error(format!(
+                "font 는 비어 있지 않은 문자열이어야 합니다 (받음: {other})"
+            ))
+        }
+    };
+    let width_mm = match opt_f64(args, "pageWidthMm") {
+        Ok(v) => v.unwrap_or(210.0),
+        Err(e) => return tool_error(e),
+    };
+    let height_mm = match opt_f64(args, "pageHeightMm") {
+        Ok(v) => v.unwrap_or(297.0),
+        Err(e) => return tool_error(e),
+    };
+
+    let blocks = rhwp::scaffold::parse_markdown_blocks(markdown);
+    let heading_count = blocks
+        .iter()
+        .filter(|b| matches!(b, rhwp::scaffold::Block::Heading { .. }))
+        .count();
+    let table_count = blocks
+        .iter()
+        .filter(|b| matches!(b, rhwp::scaffold::Block::Table { .. }))
+        .count();
+    let block_count = blocks.len();
+    let spec = rhwp::scaffold::ScaffoldSpec {
+        version: rhwp::scaffold::SCAFFOLD_SCHEMA_VERSION.to_string(),
+        title,
+        font,
+        page_size: rhwp::scaffold::PageSize {
+            width_mm: width_mm as f32,
+            height_mm: height_mm as f32,
+        },
+        blocks,
+    };
+    let built = rhwp::scaffold::build_scaffold(&spec);
+    let paragraph_count: usize = built.sections.iter().map(|s| s.paragraphs.len()).sum();
+    let bytes = match rhwp::serializer::serialize_hwpx(&built) {
+        Ok(b) => b,
+        Err(e) => return tool_error(format!("새 문서 직렬화 실패: {e}")),
+    };
+    let doc = match HwpDocument::from_bytes(&bytes) {
+        Ok(d) => d,
+        Err(e) => return tool_error(format!("새 문서 파싱 실패: {e}")),
+    };
+    let page_count = doc.page_count();
+    let doc_id = format!("doc-{}", sessions.next_id);
+    sessions.next_id += 1;
+    sessions.docs.insert(
+        doc_id.clone(),
+        SessionDoc {
+            doc,
+            source_is_hwpx: true,
+            size_bytes: bytes.len(),
+            detected_format: rhwp::parser::FileFormat::Hwpx,
+        },
+    );
+    tool_ok_text(
+        serde_json::json!({
+            "schemaVersion": ENVELOPE_SCHEMA_VERSION,
+            "docId": doc_id,
+            "source": "markdown",
+            "pageCount": page_count,
+            "blockCount": block_count,
+            "headingCount": heading_count,
+            "paragraphCount": paragraph_count,
+            "tableCount": table_count,
+            "nextCall": {
+                "name": "hwp_doc_save",
+                "arguments": { "docId": doc_id, "output": "<저장 경로 — .hwp 또는 .hwpx>" },
+                "why": "핸들은 메모리에만 있다 — hwp_doc_save 가 유일한 기록 지점이며 확장자가 형식을 정한다"
+            }
+        })
+        .to_string(),
+    )
+}
+
+/// 열린 핸들에 Markdown 블록을 문단으로 끼워 넣는다.
+///
+/// 위치 해석은 셋 중 하나만 허용한다 — 생략(마지막 구역 끝), `at`(문단 인덱스 앞),
+/// `afterText`(첫 매치 문단 뒤). `at` 과 `afterText` 를 함께 보내면 어느 쪽을 믿었는지
+/// 봉투로는 알 수 없으므로 거부한다.
+fn session_insert_markdown(args: &serde_json::Value, sessions: &mut Sessions) -> serde_json::Value {
+    let Some(doc_id) = args.get("docId").and_then(|d| d.as_str()) else {
+        return tool_error("docId 가 필요합니다".into());
+    };
+    let Some(markdown) = args.get("markdown").and_then(|m| m.as_str()) else {
+        return tool_error("markdown 이 필요합니다".into());
+    };
+    if markdown.trim().is_empty() {
+        return tool_error("markdown 은 빈 문자열일 수 없습니다".into());
+    }
+    let section_arg = match opt_u64(args, "section") {
+        Ok(v) => v.map(|v| v as usize),
+        Err(e) => return tool_error(e),
+    };
+    let at_arg = match opt_u64(args, "at") {
+        Ok(v) => v.map(|v| v as usize),
+        Err(e) => return tool_error(e),
+    };
+    let after_text = match args.get("afterText") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s.as_str()),
+        Some(other) => {
+            return tool_error(format!(
+                "afterText 는 비어 있지 않은 문자열이어야 합니다 (받음: {other})"
+            ))
+        }
+    };
+    if at_arg.is_some() && after_text.is_some() {
+        return tool_error("at 과 afterText 는 동시에 줄 수 없습니다 — 하나만 지정".into());
+    }
+    let Some(sd) = sessions.docs.get_mut(doc_id) else {
+        return tool_error_with_next(
+            format!("열려 있지 않은 핸들: {doc_id} (hwp_open 먼저)"),
+            "hwp_open",
+            serde_json::json!({ "path": "<열 문서 경로>" }),
+            "핸들이 없거나 만료 — hwp_open 으로 docId 를 재발급한 뒤 재시도",
+        );
+    };
+    let section_count = sd.doc.document().sections.len();
+    let (section, at): (usize, Option<usize>) = if let Some(text) = after_text {
+        let matches = sd.doc.grep(text, true, Some(1));
+        let Some(m) = matches.first() else {
+            return tool_error_with_next(
+                format!("afterText '{text}' 를 본문에서 찾지 못했습니다"),
+                "hwp_doc_search",
+                serde_json::json!({ "docId": doc_id, "query": text }),
+                "검색으로 실제 문구와 section/paragraph 주소를 확인한 뒤 at 으로 지목",
+            );
+        };
+        if let Some(s) = section_arg {
+            if s != m.section {
+                return tool_error(format!(
+                    "afterText 가 처음 나오는 구역은 {} 인데 section={} 을 요청했습니다",
+                    m.section, s
+                ));
+            }
+        }
+        (m.section, Some(m.paragraph + 1))
+    } else {
+        let section = match section_arg {
+            Some(s) => s,
+            None if at_arg.is_some() => 0,
+            None => section_count.saturating_sub(1),
+        };
+        (section, at_arg)
+    };
+    let report = match sd.doc.insert_markdown_native(section, at, markdown) {
+        Ok(r) => r,
+        Err(e) => return tool_error(format!("삽입 실패: {e}")),
+    };
+    // [#3719] 눈검증 대상 쪽 — 삽입된 문단 범위가 걸친 쪽. 재조판은 insert 가 끝냈다.
+    let targets: Vec<(usize, usize)> = (report.first_paragraph
+        ..report.first_paragraph + report.inserted_paragraphs)
+        .map(|p| (section, p))
+        .collect();
+    let changed_pages = if targets.is_empty() {
+        serde_json::json!([])
+    } else {
+        changed_pages_value(&mut sd.doc, &targets)
+    };
+    tool_ok_text(
+        serde_json::json!({
+            "schemaVersion": ENVELOPE_SCHEMA_VERSION,
+            "docId": doc_id,
+            "section": section,
+            "firstParagraph": report.first_paragraph,
+            "insertedParagraphs": report.inserted_paragraphs,
+            "headingCount": report.heading_count,
+            "paragraphCount": report.paragraph_count,
+            "tableCount": report.table_count,
+            "paragraphCountAfter": report.paragraph_count_after,
+            "changedPages": changed_pages,
+        })
+        .to_string(),
+    )
+}
+
+/// 열린 핸들에서 문단 하나를 지운다 — 코어 `delete_paragraph_native` 의 얇은 껍데기.
+fn session_delete_paragraph(
+    args: &serde_json::Value,
+    sessions: &mut Sessions,
+) -> serde_json::Value {
+    let Some(doc_id) = args.get("docId").and_then(|d| d.as_str()) else {
+        return tool_error("docId 가 필요합니다".into());
+    };
+    let section = match opt_u64(args, "section") {
+        Ok(v) => v.unwrap_or(0) as usize,
+        Err(e) => return tool_error(e),
+    };
+    let paragraph = match req_u64(args, "paragraph") {
+        Ok(v) => v as usize,
+        Err(e) => return tool_error(e),
+    };
+    let Some(sd) = sessions.docs.get_mut(doc_id) else {
+        return tool_error_with_next(
+            format!("열려 있지 않은 핸들: {doc_id} (hwp_open 먼저)"),
+            "hwp_open",
+            serde_json::json!({ "path": "<열 문서 경로>" }),
+            "핸들이 없거나 만료 — hwp_open 으로 docId 를 재발급한 뒤 재시도",
+        );
+    };
+    let removed_text_preview: String = sd
+        .doc
+        .document()
+        .sections
+        .get(section)
+        .and_then(|s| s.paragraphs.get(paragraph))
+        .map(|p| p.text.chars().take(40).collect())
+        .unwrap_or_default();
+    if let Err(e) = sd.doc.delete_paragraph_native(section, paragraph) {
+        return tool_error(format!("삭제 실패: {e}"));
+    }
+    sd.doc.repaginate_if_needed();
+    let paragraph_count_after = sd
+        .doc
+        .document()
+        .sections
+        .get(section)
+        .map(|s| s.paragraphs.len())
+        .unwrap_or(0);
+    // 지운 자리의 앞 문단(없으면 새 첫 문단)이 걸친 쪽이 다시 흐른 쪽이다.
+    let anchor = paragraph
+        .saturating_sub(1)
+        .min(paragraph_count_after.saturating_sub(1));
+    let changed_pages = changed_pages_value(&mut sd.doc, &[(section, anchor)]);
+    tool_ok_text(
+        serde_json::json!({
+            "schemaVersion": ENVELOPE_SCHEMA_VERSION,
+            "docId": doc_id,
+            "section": section,
+            "paragraph": paragraph,
+            "deleted": true,
+            "removedTextPreview": removed_text_preview,
+            "paragraphCountAfter": paragraph_count_after,
+            "changedPages": changed_pages,
         })
         .to_string(),
     )

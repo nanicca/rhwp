@@ -25,6 +25,10 @@ pub const ALL_SESSION_TOOLS: &[&str] = &[
     "hwp_doc_replace_text",
     "hwp_doc_set_cell",
     "hwp_doc_fill_fields",
+    // [Markdown 저작] 대화 초안 → 새 핸들, 열린 핸들에 블록 삽입, 문단 삭제.
+    "hwp_new_from_markdown",
+    "hwp_doc_insert_markdown",
+    "hwp_doc_delete_paragraph",
     "hwp_doc_save",
     "hwp_close",
     // [#4357 W1] 워크스페이스 축 — 코퍼스 인벤토리·id 열기·안정 ID 트리·변이 저널.
@@ -274,8 +278,27 @@ pub const PROFILES: &[AgentProfile] = &[
             "hwp_sanitize",
             "hwp_redact",
         ],
-        session_tools: None,
+        // [Markdown 저작] 대화 초안을 문서로 옮기는 세션 축 — 새 핸들·블록 삽입·문단
+        // 삭제·치환·셀 기록과, 그 결과를 보는 조회·저장까지만 연다.
+        session_tools: Some(&[
+            "hwp_open",
+            "hwp_new_from_markdown",
+            "hwp_doc_insert_markdown",
+            "hwp_doc_delete_paragraph",
+            "hwp_doc_replace_text",
+            "hwp_doc_set_cell",
+            "hwp_doc_text",
+            "hwp_doc_structure",
+            "hwp_doc_search",
+            "hwp_doc_tables",
+            "hwp_doc_render_page",
+            "hwp_doc_save",
+            "hwp_close",
+        ]),
         recipe: &[
+            "대화에서 만든 Markdown 초안은 hwp_new_from_markdown → (hwp_doc_text 로 확인) → hwp_doc_save output=….hwp|.hwpx → hwp_close",
+            "기존 문서에 내용을 보태려면 hwp_open → hwp_doc_insert_markdown(생략=끝, afterText=그 문단 뒤, at=인덱스 앞) → hwp_doc_save",
+            "문구 손질은 hwp_doc_replace_text, 표 값은 hwp_doc_set_cell, 문단 삭제는 hwp_doc_delete_paragraph(큰 인덱스부터)",
             "hwp_build_from_ingest 로 ingest JSON → HWPX 생성",
             "hwp_export_svg 로 조판 확인 후 hwp_export_pdf 로 발행",
             "웹·LLM 소비용은 hwp_export_markdown, 다운스트림 AI 파이프라인용은 hwp_export_doclang",

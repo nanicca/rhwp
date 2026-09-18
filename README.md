@@ -255,6 +255,22 @@ hwp_fill_fields { "path": "서식.hwp", "data": {"성명":"홍길동"} }  // 누
 ```
 
 대형 문서는 `hwp_open` → `hwp_doc_*` 세션 도구로 재파싱 없이 반복 조회·편집한다.
+
+대화창에서 만든 초안(Markdown)은 그대로 문서가 된다 — 새로 만들거나, 열어 둔 문서에
+끼워 넣고, `.hwp`/`.hwpx` 로 저장한다:
+
+```jsonc
+hwp_new_from_markdown   { "title": "사업 보고서", "markdown": "# 1. 개요
+
+본문…
+
+| 구분 | 값 |
+|---|---|
+| 매출 | 120 |" }  // docId
+hwp_doc_insert_markdown { "docId": "doc-1", "afterText": "3. 추진 계획", "markdown": "- 대화에서 정한 항목" }
+hwp_doc_delete_paragraph{ "docId": "doc-1", "paragraph": 41 }
+hwp_doc_save            { "docId": "doc-1", "output": "보고서.hwp" }         // 확장자가 형식을 정한다
+```
 전체 도구 지도·오류 의미론은 [MCP 통합 가이드](mydocs/manual/mcp_integration_guide.md),
 막히면 [에이전트 실패 사전](mydocs/manual/agent_troubleshooting_guide.md).
 CLI 만 쓸 때의 입구는 `rhwp capabilities` 한 번이면 된다(전 명령 기계 계약 자기서술).

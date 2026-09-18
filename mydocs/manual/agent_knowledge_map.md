@@ -176,6 +176,9 @@ IR·provenance·plan 네 축을 한 번에 조립하고, 빠진 축은 `missingA
 | 표 격자 | `hwp_doc_tables` | `tables[]` |
 | 누름틀 채우기(메모리) | `hwp_doc_fill_fields` | `filledCount`·`changedPages` |
 | 치환(메모리) | `hwp_doc_replace_text` | `replacedCount`·`changedPages` |
+| Markdown 초안 → 새 핸들 | `hwp_new_from_markdown` | `docId`·`headingCount`·`tableCount`·`nextCall(hwp_doc_save)` |
+| Markdown 블록 삽입(메모리) | `hwp_doc_insert_markdown` | `firstParagraph`·`insertedParagraphs`·`changedPages` |
+| 문단 삭제(메모리) | `hwp_doc_delete_paragraph` | `deleted`·`paragraphCountAfter`·`changedPages` |
 | 표 칸 기록(메모리) | `hwp_doc_set_cell` | `oldText`/`newText`·`changedPages` |
 | 바뀐 쪽 렌더 | `hwp_doc_render_page` | `bytes`·`output` |
 | 디스크 기록 | `hwp_doc_save` | `output`·`verify` |

@@ -86,7 +86,61 @@ CLI 는 프로세스마다 문서를 다시 파싱한다. 대형 문서를 여�
 - 암호 HWP5·압축 HWP3·ODF 암호 HWPX는 선택 `password`로 연다. `password`는
   `writeOnly` 입력이며 rhwp는 응답·오류·세션 상태에 값을 넣지 않는다. 다만 MCP 호스트의
   대화 기록·telemetry가 도구 인자를 보관할 수 있으므로 신뢰된 로컬 호스트에서만 사용한다.
-- 현재 세션 표면은 조회(`hwp_doc_text`)다. 편집 왕복 세션은 #3140 의 후속 단계다.
+- 세션 편집은 `hwp_doc_replace_text`/`hwp_doc_set_cell`/`hwp_doc_fill_fields` 로 IR 에
+  누적하고 `hwp_doc_save` 가 한 번 기록한다. 대화 초안을 문단으로 옮기는 Markdown 저작
+  축은 아래 절을 따른다.
+
+### Markdown 저작 — 대화 초안을 HWP/HWPX 로
+
+에이전트가 대화창에서 만든 초안은 Markdown 이다. 그것을 `scaffold` JSON 으로 손수 옮기지
+않고 서버가 블록(제목·문단·글머리표·번호 항목·파이프 표)으로 풀어 문서에 넣는다.
+세 도구가 세션 전용으로 더해졌고, 저장은 기존 `hwp_doc_save` 하나뿐이다 — **output 의
+확장자가 형식을 정한다**(`.hwp` → HWP5, `.hwpx` → HWPX).
+
+| 도구 | 무엇 | 위치 |
+|---|---|---|
+| `hwp_new_from_markdown` | `markdown`(+선택 `title`·`font`·`pageWidthMm`·`pageHeightMm`)으로 **새 핸들**을 연다 | — |
+| `hwp_doc_insert_markdown` | 열린 핸들에 Markdown 블록을 문단으로 끼운다 | 생략=마지막 구역 끝 / `at`=문단 인덱스 **앞** / `afterText`=첫 매치 문단 **뒤** (`at`·`afterText` 동시 지정은 거부) |
+| `hwp_doc_delete_paragraph` | 문단 하나를 지운다 (`section`/`paragraph`, 0 기준) | 여러 개는 큰 인덱스부터 |
+
+새 문서 흐름:
+
+```jsonc
+→ {"name":"hwp_new_from_markdown","arguments":{"title":"사업 보고서","markdown":"# 1. 개요
+
+본문…
+
+| 구분 | 값 |
+|---|---|
+| 매출 | 120 |"}}
+← {"docId":"doc-1","pageCount":1,"headingCount":1,"tableCount":1,"nextCall":{"name":"hwp_doc_save",…}}
+→ {"name":"hwp_doc_text","arguments":{"docId":"doc-1"}}                      // 눈으로 확인
+→ {"name":"hwp_doc_save","arguments":{"docId":"doc-1","output":"보고서.hwp","verify":true}}
+← {"outputFormat":"hwp5","bytes":…,"verify":{"identical":true,"diffCount":0}}
+→ {"name":"hwp_close","arguments":{"docId":"doc-1"}}
+```
+
+기존 문서 수정 흐름:
+
+```jsonc
+→ {"name":"hwp_open","arguments":{"path":"원본.hwp"}}                         // docId
+→ {"name":"hwp_doc_insert_markdown","arguments":{"docId":"doc-1","afterText":"3. 추진 계획","markdown":"- 대화에서 정한 항목
+- 둘째 항목"}}
+← {"firstParagraph":41,"insertedParagraphs":2,"changedPages":[3]}
+→ {"name":"hwp_doc_render_page","arguments":{"docId":"doc-1","page":3,…}}    // 바뀐 쪽만 눈검증
+→ {"name":"hwp_doc_save","arguments":{"docId":"doc-1","output":"수정본.hwp"}}
+```
+
+- 지원 구문은 `src/scaffold/markdown.rs` 의 표가 단일 출처다. 인라인 강조(`**`·`` ` ``)는
+  표식만 벗겨 평문으로 들어가고, 미지 구문은 실패 대신 평문 문단이 된다.
+- 새 문단은 삽입 지점 **앞 문단의 서식을 상속**한다. `#` 제목은 개요 수준 문단
+  (`hwp_doc_structure` 가 개요로 인식)이고, 표는 실선 테두리다. 문서에 없는 모양은
+  `doc_info` 에 덧붙일 뿐 기존 항목은 고치지 않는다.
+- `hwp_new_from_markdown` 핸들은 원본 형식이 HWPX 로 기억되므로 `.hwp` 로 저장하면
+  `hwp_convert_hwp5` 와 같은 어댑터 경로를 탄다. 저장본 자기검증은 `verify:true`.
+- 세 도구 모두 `idempotentHint:false` 다 — 같은 인자를 다시 보내면 한 번 더 끼우거나
+  다음 문단을 지운다. `hwp_ws_journal` 에는 변이로 기록된다.
+- 계약: `tests/cases/mcp_markdown_authoring_contract.rs`.
 
 ### 무상태 도구는 CLI 계약의 얇은 껍데기
 
@@ -143,6 +197,8 @@ rhwp capabilities --mcp | jq -c '.tools[] | {name, cli: .cli.args, required: .in
 | 누름틀 조사 → 채우기 | `hwp_fields` → `hwp_fill_fields` |
 | 표 좌표로 값 쓰기 | `hwp_set_cell` |
 | 문구 일괄 치환 | `hwp_replace_text` |
+| 대화 초안(Markdown)으로 새 문서 | `hwp_new_from_markdown` → `hwp_doc_save`(`.hwp`/`.hwpx`) |
+| 기존 문서에 Markdown 내용 끼우기·문단 삭제 | `hwp_open` → `hwp_doc_insert_markdown` / `hwp_doc_delete_paragraph` → `hwp_doc_save` |
 | 시각 확인(VLM) | `hwp_export_svg` |
 | 변환·편집 무손실 검증 | `hwp_ir_diff` |
 | 아카이브 대량 스윕 | `hwp_batch` / `hwp_batch_search` |

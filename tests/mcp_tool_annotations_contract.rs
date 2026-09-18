@@ -344,11 +344,18 @@ fn served_tools_reflect_manifest_and_session_tools_are_consistent() {
                 assert_eq!(a["destructiveHint"], false, "{name}: {a}");
                 assert_eq!(a["idempotentHint"], true, "{name}: {a}");
             }
+            // [Markdown 저작] 새 핸들(호출마다 docId)·블록 삽입·문단 삭제 — 세션 IR 을 바꾸고,
+            // 같은 인자를 다시 보내면 상태가 또 바뀐다(한 번 더 끼우거나 다음 문단을 지운다).
+            "hwp_new_from_markdown" | "hwp_doc_insert_markdown" | "hwp_doc_delete_paragraph" => {
+                assert_eq!(a["readOnlyHint"], false, "{name}: {a}");
+                assert_eq!(a["destructiveHint"], false, "{name}: {a}");
+                assert_eq!(a["idempotentHint"], false, "{name}: {a}");
+            }
             other => panic!("계약에 없는 세션 도구 {other} — 이 match 에 판정을 추가하라: {a}"),
         }
     }
     assert_eq!(
-        session_seen, 18,
+        session_seen, 21,
         "세션 도구 수가 달라졌다 — agent_profiles::ALL_SESSION_TOOLS 와 이 계약을 함께 갱신하라"
     );
 }

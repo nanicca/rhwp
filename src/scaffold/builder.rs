@@ -205,7 +205,7 @@ fn mm_to_hwpunit(mm: f32) -> u32 {
 }
 
 /// 표/본문이 차지할 수 있는 편집 영역 폭(HWPUNIT).
-fn content_width_of(pd: &PageDef) -> u32 {
+pub(crate) fn content_width_of(pd: &PageDef) -> u32 {
     let outer_margin_lr: i32 = 283 * 2;
     (pd.width as i32 - pd.margin_left as i32 - pd.margin_right as i32 - outer_margin_lr).max(7200)
         as u32
@@ -223,7 +223,7 @@ fn utf16_offsets(text: &str) -> (Vec<u32>, u32) {
 }
 
 /// 평문 텍스트 문단을 만든다(제목/제목/본문 공용).
-fn make_text_para(text: &str, para_shape_id: u16, char_shape_id: u32) -> Paragraph {
+pub(crate) fn make_text_para(text: &str, para_shape_id: u16, char_shape_id: u32) -> Paragraph {
     let (char_offsets, utf16_len) = utf16_offsets(text);
     Paragraph {
         text: text.to_string(),
@@ -252,7 +252,7 @@ fn make_text_para(text: &str, para_shape_id: u16, char_shape_id: u32) -> Paragra
 
 /// 셀 내부 문단을 만든다. `create_table_native` 의 셀 문단 보정과 정합
 /// (char_count_msb=true, raw_header_extra 10바이트, seg_width=셀폭-좌우패딩).
-fn make_cell_para(text: &str, col_width: u32) -> Paragraph {
+fn make_cell_para(text: &str, col_width: u32, char_shape_id: u32) -> Paragraph {
     let (char_offsets, utf16_len) = utf16_offsets(text);
     let seg_w = (col_width as i32) - 141 - 141; // 셀 폭 - 좌우 패딩
     let mut raw_header_extra = vec![0u8; 10];
@@ -265,7 +265,7 @@ fn make_cell_para(text: &str, col_width: u32) -> Paragraph {
         char_offsets,
         char_shapes: vec![CharShapeRef {
             start_pos: 0,
-            char_shape_id: CS_NORMAL,
+            char_shape_id,
         }],
         line_segs: vec![LineSeg {
             text_start: 0,
@@ -291,6 +291,17 @@ fn make_cell_para(text: &str, col_width: u32) -> Paragraph {
 /// 구조 조립은 `DocumentCore::create_table_native`
 /// (`src/document_core/commands/object_ops/table.rs`)의 균일 그리드 경로와 정합한다.
 fn build_table_paragraph(rows: &[Vec<String>], content_width: u32) -> Option<Paragraph> {
+    build_table_paragraph_with(rows, content_width, BF_SOLID, CS_NORMAL)
+}
+
+/// [`build_table_paragraph`] 의 일반형 — 기존 문서에 표를 끼워 넣을 때는 그 문서의
+/// `doc_info` 에 실재하는 실선 테두리 ID 와 글자 모양 ID 를 넘긴다(`insert.rs`).
+pub(crate) fn build_table_paragraph_with(
+    rows: &[Vec<String>],
+    content_width: u32,
+    border_fill_id: u16,
+    char_shape_id: u32,
+) -> Option<Paragraph> {
     let row_count = rows.len();
     if row_count == 0 {
         return None;
@@ -320,10 +331,10 @@ fn build_table_paragraph(rows: &[Vec<String>], content_width: u32) -> Option<Par
                 .and_then(|row| row.get(c as usize))
                 .map(String::as_str)
                 .unwrap_or("");
-            let mut cell = Cell::new_empty(c, r, col_width, cell_height, BF_SOLID);
+            let mut cell = Cell::new_empty(c, r, col_width, cell_height, border_fill_id);
             cell.padding = cell_pad;
             cell.vertical_align = VerticalAlign::Center;
-            cell.paragraphs = vec![make_cell_para(text, col_width)];
+            cell.paragraphs = vec![make_cell_para(text, col_width, char_shape_id)];
             cell.raw_list_extra = Vec::new();
             cells.push(cell);
         }
@@ -362,7 +373,7 @@ fn build_table_paragraph(rows: &[Vec<String>], content_width: u32) -> Option<Par
         cell_spacing: 0,
         padding: cell_pad,
         row_sizes,
-        border_fill_id: BF_SOLID,
+        border_fill_id,
         zones: Vec::new(),
         cells,
         cell_grid: Vec::new(),
@@ -408,7 +419,7 @@ fn build_table_paragraph(rows: &[Vec<String>], content_width: u32) -> Option<Par
         char_offsets: vec![],
         char_shapes: vec![CharShapeRef {
             start_pos: 0,
-            char_shape_id: CS_NORMAL,
+            char_shape_id,
         }],
         line_segs: vec![LineSeg {
             text_start: 0,

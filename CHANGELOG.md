@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### CLI·agent
+
+- `mcp-serve` 에 Markdown 저작 세션 도구 3종을 추가했다 — `hwp_new_from_markdown`(대화 초안으로
+  새 핸들), `hwp_doc_insert_markdown`(열린 핸들에 제목·문단·글머리표·표 블록 삽입, 위치는
+  끝/`at`/`afterText`), `hwp_doc_delete_paragraph`(문단 삭제). 저장은 기존 `hwp_doc_save` 가 맡고
+  출력 확장자(`.hwp`/`.hwpx`)가 형식을 정한다. 라이브러리에는 `scaffold::parse_markdown_blocks` 와
+  `DocumentCore::insert_blocks_native`/`insert_markdown_native` 가 생겼고, `콘텐츠제작` 프로필이
+  이 세션 축을 연다. 계약: `tests/cases/mcp_markdown_authoring_contract.rs`.
+
 ## [0.8.6] — 2026-09-02
 
 > v0.8.4 이후 기능 기준선의 2,214커밋에서 확인한 262개 PR provenance를 바탕으로 준비한 누적 PATCH
